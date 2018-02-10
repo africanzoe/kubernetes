@@ -11,7 +11,7 @@ This playbook is supposed to run on 6 VMs as the following:
 
 # Role Variables
 
-## Misc vars
+## Global vars
 
 - **user**: the name of the user running the cluster.
 - **group**: the name of the group running the cluster.
