@@ -19,19 +19,19 @@ admin_key: "admin-key.pem"
 admin_crt: "admin.pem"
 
 # The exposed pubilc kubernetes IP
-kubernetes_public_ip: "192.168.1.93"
-
-workers:
-  - { node: 'k8s-worker-1', internal_ip: '10.0.11.6', external_ip: '192.168.1.11' }
-  - { node: 'k8s-worker-2', internal_ip: '10.0.11.8', external_ip: '192.168.1.98'}
-  - { node: 'k8s-worker-3', internal_ip: '10.0.11.10', external_ip: '192.168.1.99'}
+kubernetes_public_ip: "10.11.12.100"
 
 controllers:
-  - { node: 'k8s-controller-1', internal_ip: '10.0.11.7', external_ip: '192.168.1.56' }
-  - { node: 'k8s-controller-2', internal_ip: '10.0.11.9', external_ip: '192.168.1.30'}
-  - { node: 'k8s-controller-3', internal_ip: '10.0.11.11', external_ip: '192.168.1.82'}
+  - { node: 'k8s-controller-1', internal_ip: '192.168.1.11', external_ip: '10.11.12.11' }
+  - { node: 'k8s-controller-2', internal_ip: '192.168.1.12', external_ip: '10.11.12.12'}
+  - { node: 'k8s-controller-3', internal_ip: '192.168.1.13', external_ip: '10.11.12.13'}
+
+workers:
+  - { node: 'k8s-worker-1', internal_ip: '192.168.1.21', external_ip: '10.0.11.21' }
+  - { node: 'k8s-worker-2', internal_ip: '192.168.1.22', external_ip: '10.0.11.22'}
+  - { node: 'k8s-worker-3', internal_ip: '192.168.1.23', external_ip: '10.0.11.23'}
 
 # Cluster definition
 cluster_name: "kubernetes"
-cluster_cidr: "10.0.11.0/24"
+cluster_cidr: "10.11.1.0/24"
 pod_cidr: "10.0.11.0/24"
