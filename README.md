@@ -38,14 +38,14 @@ This playbook is supposed to run on 6 VMs as the following:
 
 ## The IP addresses of the workers
 
-Please provide the IP addresses of the workers nodes, ex:
+Provide the IP addresses of the workers, ex:
 - { node: 'k8s-worker-1', internal_ip: '10.0.11.100', external_ip: '192.168.1.100' }
 - { node: 'k8s-worker-2', internal_ip: '10.0.11.101', external_ip: '192.168.1.101'}
 - { node: 'k8s-worker-3', internal_ip: '10.0.11.102', external_ip: '192.168.1.102'}
 
 ## The IPs of the controllers
 
-Please provide the IP addresses of the masters nodes, ex:
+Provide the IP addresses of the masters, ex:
 - { node: 'k8s-controller-1', internal_ip: '10.0.11.10', external_ip: '192.168.1.10' }
 - { node: 'k8s-controller-2', internal_ip: '10.0.11.20', external_ip: '192.168.1.20'}
 - { node: 'k8s-controller-3', internal_ip: '10.0.11.30', external_ip: '192.168.1.30'}
