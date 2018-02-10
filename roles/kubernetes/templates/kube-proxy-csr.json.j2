@@ -1,0 +1,16 @@
+{
+  "CN": "system:kube-proxy",
+  "key": {
+    "algo": "rsa",
+    "size": {{ bits }}
+  },
+  "names": [
+    {
+      "C": "{{ country }}",
+      "L": "{{ locality }}",
+      "O": "system:node-proxier",
+      "OU": "Kubernetes",
+      "ST": "{{ state }}"
+    }
+  ]
+}

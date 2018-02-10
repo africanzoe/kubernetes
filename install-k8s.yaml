@@ -1,0 +1,10 @@
+---
+- hosts: all
+  become: False
+
+# Hint: if you are using vagrant with a custom home env uncomment the following lines
+#  environment:
+#    - VAGRANT_HOME: "/data/boxes"
+
+  roles:
+    - kubernets

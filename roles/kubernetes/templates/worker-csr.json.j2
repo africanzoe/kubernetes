@@ -1,0 +1,16 @@
+{
+  "CN": "system:node:{{ item.node }}",
+  "key": {
+    "algo": "rsa",
+    "size": {{ bits }}
+  },
+  "names": [
+    {
+      "C": "{{ country }}",
+      "L": "{{ locality }}",
+      "O": "system:nodes",
+      "OU": "Kubernetes",
+      "ST": "{{ state }}"
+    }
+  ]
+}

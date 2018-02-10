@@ -1,0 +1,633 @@
+---
+# Installing the Client Tools
+- block:
+    - debug: msg="Installing the Client Tools"
+
+    - name: Create the pre-flight directory
+      file:
+        dest: "{{ pre_flight_dir }}"
+        state: directory
+        mode: 0755
+        owner: "{{ user }}"
+        group: "{{ group }}"
+      delegate_to: localhost
+      tags:
+        - local_dir
+
+    - name: Get the cfss binaries
+      get_url:
+        url: "{{ item }}"
+        dest: "{{ pre_flight_dir }}/{{ item | urlsplit('path') | regex_replace('^(.*)/(.*)_(.*)$', '\\2') }}"
+        mode: "+x"
+      with_items:
+        - "https://pkg.cfssl.org/R1.2/cfssl_linux-amd64"
+        - "https://pkg.cfssl.org/R1.2/cfssljson_linux-amd64"
+      delegate_to: localhost
+      run_once: true
+      tags:
+        - cfssl_tools_download
+
+    - name: Get kubectl binaries
+      get_url:
+        url: "{{ item }}"
+        dest: "{{ pre_flight_dir }}/kubectl"
+        mode: "+x"
+      with_items:
+        - "https://storage.googleapis.com/kubernetes-release/release/v1.9.0/bin/linux/amd64/kubectl"
+      delegate_to: localhost
+      run_once: true
+      tags:
+        - kubectl_download
+  tags:
+    - local
+    - tools
+
+# Provisioning a CA and Generating TLS Certificates
+# CA part
+- block:
+    - debug: msg="Certificate Authority creation"
+
+    - name: Create CA config file
+      template:
+        src: "ca-config.json.j2"
+        dest: "{{ pre_flight_dir }}/ca-config.json"
+      force: yes
+      delegate_to: localhost
+      tags:
+        - copy_ca_config
+
+    - name: Create CA CSR file
+      template:
+        src: "ca-csr.json.j2"
+        dest: "{{ pre_flight_dir }}/ca-csr.json"
+      force: yes
+      delegate_to: localhost
+      tags:
+        - copy_ca_csr
+
+    - name: Generate the CA certificates
+      shell: "{{ pre_flight_dir }}/cfssl gencert -initca ca-csr.json | {{ pre_flight_dir }}/cfssljson -bare ca"
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      delegate_to: localhost
+      tags:
+        - ca_gen
+  tags:
+    - local
+    - ca
+
+# Admin client part
+- block:
+    - debug: msg="Admin Client Certificate creation"
+
+    - name: Create Admin CSR file
+      template:
+        src: "admin-csr.json.j2"
+        dest: "{{ pre_flight_dir }}/admin-csr.json"
+      force: yes
+      delegate_to: localhost
+      tags:
+        - copy_ca_csr
+
+    - name: Generate Admin certificates
+      shell: "{{ pre_flight_dir }}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json -profile=kubernetes admin-csr.json | {{ pre_flight_dir }}/cfssljson -bare admin"
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      delegate_to: localhost
+      tags:
+        - ca_admin_gen
+  tags:
+    - local
+    - ca_admin
+
+# The Kubelet Client Certificates/Workers part
+- block:
+    - debug: msg="The Kubelet Client Certificates creation"
+
+    - name: Create workers CSR file
+      template:
+        src: "worker-csr.json.j2"
+        dest: "{{ pre_flight_dir }}/{{ item.node }}-csr.json"
+      with_items:
+        - "{{ workers }}"
+      force: yes
+      delegate_to: localhost
+      tags:
+        - copy_worker_csr
+
+    - name: Generate workers CSR file
+      shell: >
+        {{ pre_flight_dir }}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem
+        -config=ca-config.json -hostname={{ item.node }},{{ item.external_ip }},{{ item.internal_ip }}
+        -profile=kubernetes {{ item.node }}-csr.json | {{ pre_flight_dir }}/cfssljson -bare {{ item.node }}
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      with_items:
+        - "{{ workers }}"
+      delegate_to: localhost
+      tags:
+        - ca_worker_gen
+  tags:
+    - local
+    - workers_crt
+
+# The kube-proxy Client Certificate
+- block:
+    - debug: msg="The kube-proxy Client Certificate generation"
+
+    - name: Create kube proxy CSR file
+      template:
+        src: "kube-proxy-csr.json.j2"
+        dest: "{{ pre_flight_dir }}/kube-proxy-csr.json"
+      force: yes
+      delegate_to: localhost
+
+    - name: Generate kube proxy CSR file
+      shell: >
+        {{ pre_flight_dir }}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json
+        -profile=kubernetes kube-proxy-csr.json | {{ pre_flight_dir }}/cfssljson -bare kube-proxy
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      delegate_to: localhost
+  tags:
+    - local
+    - proxy_crt
+
+# The Kubernetes API Server Certificate
+- block:
+    - debug: msg="The Kubernetes API Server Certificate creation"
+
+    - name: Create Kubernetes CSR file
+      template:
+        src: "kubernetes-csr.json.j2"
+        dest: "{{ pre_flight_dir }}/kubernetes-csr.json"
+      force: yes
+      delegate_to: localhost
+
+    - name: Generate Kubernetes CSR file
+      shell: >
+        {{ pre_flight_dir }}/cfssl gencert -ca=ca.pem -ca-key=ca-key.pem -config=ca-config.json
+        -hostname={% for ip in controllers %}{{ controllers[loop.index-1].internal_ip }},{% endfor %}{{ kubernetes_public_ip }},127.0.0.1,kubernetes.default
+        -profile=kubernetes kubernetes-csr.json | {{ pre_flight_dir }}/cfssljson -bare kubernetes
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      delegate_to: localhost
+  tags:
+    - local
+    - kubernetes_crt
+
+# Distribute the Client and Server Certificates
+- block:
+    - debug: msg="Distribute the Client and Server Certificates"
+
+    - name: Workers certificates
+      copy:
+        src: "{{ item }}"
+        dest: "{{ ansible_env.PWD }}"
+      with_fileglob:
+        - "{{ pre_flight_dir }}/{{ ansible_hostname }}*"
+        - "{{ pre_flight_dir }}/ca.pem"
+      force: yes
+      when: ansible_hostname.find('worker') != -1
+
+    - name: Distribute the Client and Server Certificates
+      copy:
+        src: "{{ item }}"
+        dest: "{{ ansible_env.PWD }}"
+      with_items:
+        - "{{ pre_flight_dir }}/ca.pem"
+        - "{{ pre_flight_dir }}/ca-key.pem"
+        - "{{ pre_flight_dir }}/kubernetes-key.pem"
+        - "{{ pre_flight_dir }}/kubernetes.pem"
+      force: yes
+      when: ansible_hostname.find('controller') != -1
+  tags:
+    - distribute_crt
+
+
+# The kubelet Kubernetes Configuration File
+- block:
+    - debug: msg="The kubelet Kubernetes Configuration File creation"
+
+    - name: Set the cluster config
+      shell: >
+        {{ pre_flight_dir }}/kubectl config set-cluster {{ cluster_name }}
+        --certificate-authority=ca.pem
+        --embed-certs=true
+        --server=https://{{ kubernetes_public_ip }}:6443
+        --kubeconfig={{ item.node }}.kubeconfig
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      with_items:
+        - "{{ workers }}"
+      delegate_to: localhost
+
+    - name: Set credentials config
+      shell: >
+        {{ pre_flight_dir }}/kubectl config set-credentials system:node:{{ item.node }}
+        --client-certificate={{ item.node }}.pem
+        --client-key={{ item.node }}-key.pem
+        --embed-certs=true
+        --kubeconfig={{ item.node }}.kubeconfig
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      with_items:
+        - "{{ workers }}"
+      delegate_to: localhost
+
+    - name: Set context config
+      shell: >
+        {{ pre_flight_dir }}/kubectl config set-context default
+        --cluster={{ cluster_name }}
+        --user=system:node:{{ item.node }}
+        --kubeconfig={{ item.node }}.kubeconfig
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      with_items:
+        - "{{ workers }}"
+      delegate_to: localhost
+
+    - name: Set context use
+      shell: "kubectl config use-context default --kubeconfig={{ item.node }}.kubeconfig"
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      with_items:
+        - "{{ workers }}"
+      delegate_to: localhost
+  tags:
+    - local
+    - kubeconf
+
+# The kube-proxy Kubernetes Configuration File
+- block:
+    - debug: msg="Generate a kubeconfig file for the kube-proxy service"
+
+    - name: Set the cluster config
+      shell: >
+        {{ pre_flight_dir }}/kubectl config set-cluster {{ cluster_name }}
+        --certificate-authority=ca.pem
+        --embed-certs=true
+        --server=https://{{ kubernetes_public_ip }}:6443
+        --kubeconfig=kube-proxy.kubeconfig
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      with_items:
+        - "{{ workers }}"
+      delegate_to: localhost
+
+    - name: Set credentials config
+      shell: >
+        {{ pre_flight_dir }}/kubectl config set-credentials kube-proxy
+        --client-certificate=kube-proxy.pem
+        --client-key=kube-proxy-key.pem
+        --embed-certs=true
+        --kubeconfig=kube-proxy.kubeconfig
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      with_items:
+        - "{{ workers }}"
+      delegate_to: localhost
+
+    - name: Set context use
+      shell: >
+        {{ pre_flight_dir }}/kubectl config set-context default
+        --cluster={{ cluster_name }}
+        --user=kube-proxy
+        --kubeconfig=kube-proxy.kubeconfig
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      with_items:
+        - "{{ workers }}"
+      delegate_to: localhost
+
+    - name: Set context use
+      shell: "kubectl config use-context default --kubeconfig=kube-proxy.kubeconfig"
+      args:
+        chdir: "{{ pre_flight_dir }}"
+      delegate_to: localhost
+  tags:
+    - local
+    - proxy_conf
+
+# Distribute the Kubernetes Configuration Files
+- name: Distribute the workers Kubernetes certificates
+  copy:
+    src: "{{ item }}"
+    dest: "{{ ansible_env.PWD }}"
+  with_items:
+    - "{{ pre_flight_dir }}/{{ ansible_hostname }}.kubeconfig"
+    - "{{ pre_flight_dir }}/kube-proxy.kubeconfig"
+  force: yes
+  when: ansible_hostname.find('worker') != -1
+
+# Generating the Data Encryption Config and Key
+- block:
+    - name: Generate the encryption_key
+      shell: "head -c 32 /dev/urandom | base64"
+      register: encrypt_key
+      delegate_to: localhost
+      run_once: true
+
+    - name: Set the encryption_key var
+      set_fact:
+        encryption_key: "{{ encrypt_key.stdout }}"
+
+    - debug: msg="{{ encrypt_key.stdout }}"
+
+    - name: Copy the encryption config file
+      template:
+        src: "encryption-config.yaml.j2"
+        dest: "~/encryption-config.yaml"
+      force: yes
+      when: ansible_hostname.find('controller') != -1
+  tags:
+    - encryption
+
+# Bootstrapping the etcd Cluster
+- block:
+    - name: Get the etcd binaries
+      unarchive:
+        src: "https://github.com/coreos/etcd/releases/download/v3.2.11/etcd-v3.2.11-linux-amd64.tar.gz"
+        dest: "/tmp"
+        remote_src: yes
+      tags:
+        - download_etcd
+
+    - name: Copy etcd binaries to PATH
+      copy:
+        src: "{{ item }}"
+        dest: "/usr/local/bin/"
+        mode: "+x"
+        remote_src: yes
+      with_items:
+        - "/tmp/etcd-v3.2.11-linux-amd64/etcd"
+        - "/tmp/etcd-v3.2.11-linux-amd64/etcdctl"
+      force: yes
+
+    - name: Create etcd config dirs
+      file:
+        name: "{{ item }}"
+        state: directory
+      with_items:
+        - "/etc/etcd"
+        - "/var/lib/etcd"
+
+    - name: Copy etcd config files
+      copy:
+        src: "{{ item }}"
+        dest: "/etc/etcd/"
+        remote_src: yes
+      with_items:
+        - "{{ ansible_env.PWD }}/ca.pem"
+        - "{{ ansible_env.PWD }}/kubernetes-key.pem"
+        - "{{ ansible_env.PWD }}/kubernetes.pem"
+      force: yes
+
+    - name: Deploy etcd systemd files
+      template:
+        src: "etcd.service.j2"
+        dest: "/etc/systemd/system/etcd.service"
+      with_items:
+        - "{{ controllers }}"
+      force: yes
+      when: ansible_hostname.find(item.node) != -1
+
+    - name: Start etcd service
+      systemd:
+        name: "etcd"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+
+    - name: Check the status of etcd
+      shell: "ETCDCTL_API=3 etcdctl member list"
+      register: etcd
+
+    - debug: msg="{{ etcd.stdout_lines }}"
+
+  when: ansible_hostname.find('controller') != -1
+  become: yes
+  tags:
+    - install_etcd
+
+# Bootstrapping the Kubernetes Control Plane
+- block:
+    - name: Get the kubernetes binaries
+      get_url:
+        url: "{{ item }}"
+        dest: "/usr/local/bin"
+        mode: "+x"
+        remote_src: yes
+      with_items:
+        - "https://storage.googleapis.com/kubernetes-release/release/v1.9.0/bin/linux/amd64/kube-apiserver"
+        - "https://storage.googleapis.com/kubernetes-release/release/v1.9.0/bin/linux/amd64/kube-controller-manager"
+        - "https://storage.googleapis.com/kubernetes-release/release/v1.9.0/bin/linux/amd64/kube-scheduler"
+        - "https://storage.googleapis.com/kubernetes-release/release/v1.9.0/bin/linux/amd64/kubectl"
+
+    - name: Create var dirs
+      file:
+        name: "/var/lib/kubernetes/"
+        state: directory
+
+    - name: Copy kubernetes config files
+      copy:
+        src: "{{ item }}"
+        dest: "/var/lib/kubernetes/"
+        remote_src: yes
+      with_items:
+        - "{{ ansible_env.PWD }}/ca.pem"
+        - "{{ ansible_env.PWD }}/kubernetes-key.pem"
+        - "{{ ansible_env.PWD }}/kubernetes.pem"
+        - "{{ ansible_env.PWD }}/encryption-config.yaml"
+      force: yes
+
+    - name: Deploy Kube-apiserver systemd files
+      template:
+        src: "kube-apiserver.service.j2"
+        dest: "/etc/systemd/system/kube-apiserver.service"
+      with_items:
+        - "{{ controllers }}"
+      force: yes
+      when: ansible_hostname.find(item.node) != -1
+
+    - name: Deploy Kube-controller-manager systemd files
+      template:
+        src: "kube-controller-manager.service.j2"
+        dest: "/etc/systemd/system/kube-controller-manager.service"
+      force: yes
+
+    - name: Deploy Kube-scheduler systemd files
+      template:
+        src: "kube-scheduler.service.j2"
+        dest: "/etc/systemd/system/kube-scheduler.service"
+      force: yes
+
+    - name: Start kubernetes service
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      with_items:
+        - "kube-apiserver"
+        - "kube-controller-manager"
+        - "kube-scheduler"
+  when: ansible_hostname.find('controller') != -1
+  become: yes
+  tags:
+    - install_kubernetes
+
+#    - name: Check the status of kubernetes components
+#      shell: "kubectl get componentstatuses"
+#      register: kubectl
+#      ignore_errors: yes
+#
+#    - debug: msg="{{ kubectl.stdout_lines }}"
+
+# RBAC
+- block:
+    - name: Copy cluster roles
+      template:
+        src: "cluster-role.j2"
+        dest: "{{ ansible_env.PWD }}/cluster-role.yaml"
+      force: yes
+
+    - name: Add ClusterRole to the cluster
+      shell: "kubectl apply -f cluster-role.yaml"
+
+    - name: Copy bind to cluster roles
+      template:
+        src: "bind-to-cluster.j2"
+        dest: "{{ ansible_env.PWD }}/bind-to-cluster.yaml"
+      force: yes
+
+    - name: Add bind to cluster role to the cluster
+      shell: "kubectl apply -f bind-to-cluster.yaml"
+
+  when: ansible_hostname.find('controller') != -1
+  become: yes
+  tags:
+    - rbac
+
+#
+#  Install loadbalancer
+#  Configure your loadbalancer to fan out on controllers
+#  This playbook is not intended to install/configure any extrnal LB
+#
+
+# Provisioning a Kubernetes Worker Node
+- block:
+    - debug: msg="Provisioning a Kubernetes Worker Node"
+
+    - name: Install socat package
+      apt:
+        name: "socat"
+        state: present
+
+    - name: Download the worker binaries
+      get_url:
+        url: "{{ item }}"
+        dest: "/usr/local/bin/"
+        mode: "+x"
+      with_items:
+        - "https://storage.googleapis.com/kubernetes-release/release/v1.9.0/bin/linux/amd64/kubectl"
+        - "https://storage.googleapis.com/kubernetes-release/release/v1.9.0/bin/linux/amd64/kube-proxy"
+        - "https://storage.googleapis.com/kubernetes-release/release/v1.9.0/bin/linux/amd64/kubelet"
+
+    - name: Create installation directories
+      file:
+        name: "{{ item }}"
+        state: directory
+      with_items:
+        - "/etc/cni/net.d"
+        - "/opt/cni/bin"
+        - "/var/lib/kubelet"
+        - "/var/lib/kube-proxy"
+        - "/var/lib/kubernetes"
+        - "/var/run/kubernetes"
+
+    - name: Get the cni plugins
+      unarchive:
+        src: "https://github.com/containernetworking/plugins/releases/download/v0.6.0/cni-plugins-amd64-v0.6.0.tgz"
+        dest: "/opt/cni/bin/"
+        remote_src: yes
+
+    - name: Get the containerd
+      unarchive:
+        src: "https://github.com/kubernetes-incubator/cri-containerd/releases/download/v1.0.0-beta.0/cri-containerd-1.0.0-beta.0.linux-amd64.tar.gz"
+        dest: "/"
+        remote_src: yes
+
+    - name: Deploy the cni config
+      template:
+        src: "{{ item }}"
+        dest: "/etc/cni/net.d/"
+      force: yes
+      with_items:
+        - "10-bridge.conf.j2"
+        - "99-loopback.conf.j2"
+
+    - name: Copy the appropriate keys and certs
+      copy:
+        src: "{{ item }}"
+        dest: "/var/lib/kubelet/"
+      with_fileglob:
+        - "{{ pre_flight_dir }}/{{ ansible_hostname }}.pem"
+        - "{{ pre_flight_dir }}/{{ ansible_hostname }}-key.pem"
+      force: yes
+
+    - name: Copy the ca.pem
+      copy:
+        src: "{{ pre_flight_dir }}/ca.pem"
+        dest: "/var/lib/kubernetes"
+      force: yes
+
+    - name: Copy the kubeconfig
+      copy:
+        src: "{{ pre_flight_dir }}/{{ ansible_hostname }}.kubeconfig"
+        dest: "/var/lib/kubelet/kubeconfig"
+      force: yes
+
+    - name: Copy the kube-proxy config
+      copy:
+        src: "{{ pre_flight_dir }}/kube-proxy.kubeconfig"
+        dest: "/var/lib/kube-proxy/kubeconfig"
+      force: yes
+
+    - name: Deploy Kube-apiserver systemd files
+      template:
+        src: "kubelet.service.j2"
+        dest: "/etc/systemd/system/kubelet.service"
+      with_items:
+        - "{{ controllers }}"
+      force: yes
+
+    - name: Deploy Kube-apiserver systemd files
+      template:
+        src: "kube-proxy.service.j2"
+        dest: "/etc/systemd/system/kube-proxy.service"
+      force: yes
+
+    - name: Start kubernetes service
+      systemd:
+        name: "{{ item }}"
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      with_items:
+        - "containerd"
+        - "cri-containerd"
+        - "kubelet"
+        - "kube-proxy"
+
+  when: ansible_hostname.find('worker') != -1
+  become: yes
+  tags:
+    - install_workers
+
+# The following debug task is used ONLY for debugging purposes
+# Ex:
+#- debug: msg=""/etc/systemd/system/{{ item | regex_replace('^(.*).j2$', '\\1')  }}""
+#  tags: test
+#  with_items:
+#    - "kubelet.service.j2"

@@ -1,0 +1,16 @@
+{
+  "CN": "admin",
+  "key": {
+    "algo": "rsa",
+    "size": {{ bits }}
+  },
+  "names": [
+    {
+      "C": "{{ country }}",
+      "L": "{{ locality }}",
+      "O": "system:masters",
+      "OU": "Kubernetes",
+      "ST": "{{ state }}"
+    }
+  ]
+}

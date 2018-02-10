@@ -1,0 +1,37 @@
+---
+# defaults file for kubernetes
+
+user: "{{ user }}"
+group: "{{ group }}"
+pre_flight_dir: "{{ role_path }}/local"
+expiry_hours: 8760 # One year validity
+bits: "4096"
+
+# Common Certificates subject
+country: "FR"
+locality: "Paris"
+state: "Paris"
+
+# Certificates default names
+ca_key: "ca-key.pem"
+ca_crt: "ca.pem"
+admin_key: "admin-key.pem"
+admin_crt: "admin.pem"
+
+# The exposed pubilc kubernetes IP
+kubernetes_public_ip: "192.168.1.93"
+
+workers:
+  - { node: 'k8s-worker-1', internal_ip: '10.0.11.6', external_ip: '192.168.1.11' }
+  - { node: 'k8s-worker-2', internal_ip: '10.0.11.8', external_ip: '192.168.1.98'}
+  - { node: 'k8s-worker-3', internal_ip: '10.0.11.10', external_ip: '192.168.1.99'}
+
+controllers:
+  - { node: 'k8s-controller-1', internal_ip: '10.0.11.7', external_ip: '192.168.1.56' }
+  - { node: 'k8s-controller-2', internal_ip: '10.0.11.9', external_ip: '192.168.1.30'}
+  - { node: 'k8s-controller-3', internal_ip: '10.0.11.11', external_ip: '192.168.1.82'}
+
+# Cluster definition
+cluster_name: "kubernetes"
+cluster_cidr: "10.0.11.0/24"
+pod_cidr: "10.0.11.0/24"

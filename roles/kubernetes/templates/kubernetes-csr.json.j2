@@ -1,0 +1,16 @@
+{
+  "CN": "kubernetes",
+  "key": {
+    "algo": "rsa",
+    "size": {{ bits }}
+  },
+  "names": [
+    {
+      "C": "{{ country }}",
+      "L": "{{ locality }}",
+      "O": "Kubernetes",
+      "OU": "Kubernetes",
+      "ST": "{{ state }}"
+    }
+  ]
+}
