@@ -1,68 +1,304 @@
-# Kubernetes installation
+# terraform-azurerm-vnet
 
-This is an Ansible playbook based on the manual steps of [Kubernetes the hard way](https://github.com/kelseyhightower/kubernetes-the-hard-way).
+[![Build Status](https://travis-ci.org/Azure/terraform-azurerm-vnet.svg?branch=master)](https://travis-ci.org/Azure/terraform-azurerm-vnet)
 
-## Requirements
+## Create a basic virtual network in Azure
 
-This playbook is supposed to run on 6 VMs as the following:
-* 3 VMs as masters and they embed on them an __etcd__ cluster
-* 3 VMs as workers
-* It assumes that there is an external loadbalancer (the IP of the LB should be provided beforehand to generate the certificates correctly)
+This Terraform module deploys a Virtual Network in Azure with a subnet or a set of subnets passed in as input parameters.
 
-# Role Variables
+The module does not create nor expose a security group. This would need to be defined separately as additional security rules on subnets in the deployed network.
 
-## Global vars
+## Usage in Terraform 0.13
 
-- **user**: the name of the user running the cluster.
-- **group**: the name of the group running the cluster.
-- **pre_flight_dir**: the name of a local directory that will be used as a working directory for certificates generation (mainly). It defaults to:  "{{ role_path }}/local".
-- **expiry_hours**: the validity of the certificates. It default to 8760 (One year).
-- **bits**: the number of bits used during certifcates generation. It defaults to "4096".
+```hcl
+provider "azurerm" {
+  features {}
+}
 
-## Common Certificates subject
+resource "azurerm_resource_group" "example" {
+  name     = "my-resources"
+  location = "West Europe"
+}
 
-- country: "FR".
-- locality: "Paris".
-- state: "Paris".
+module "vnet" {
+  source              = "Azure/vnet/azurerm"
+  resource_group_name = azurerm_resource_group.example.name
+  address_space       = ["10.0.0.0/16"]
+  subnet_prefixes     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  subnet_names        = ["subnet1", "subnet2", "subnet3"]
 
-## Certificates default names
+  subnet_service_endpoints = {
+    subnet2 = ["Microsoft.Storage", "Microsoft.Sql"],
+    subnet3 = ["Microsoft.AzureActiveDirectory"]
+  }
 
-- ca_key: the name of the CA key. It defaults to "ca-key.pem".
-- ca_crt: the name of the CA certificate. It defaults to "ca.pem".
-- admin_key: the name of the apiserver key. It defaults to "admin-key.pem".
-- admin_crt: the name of the apiserver ertificate. It defaults to "admin.pem".
+  tags = {
+    environment = "dev"
+    costcenter  = "it"
+  }
 
-## The exposed pubilc kubernetes IP
+  depends_on = [azurerm_resource_group.example]
+}
+```
 
-- kubernetes_public_ip: this is the public IP of kubernetes. It is supposed to be the IP of the loadbalancer. For ex: "10.100.200.73".
+## Usage in Terraform 0.12
 
-## The IP addresses of the workers
+```hcl
+provider "azurerm" {
+  features {}
+}
 
-Provide the IP addresses of the workers, ex:
-- { node: 'k8s-worker-1', internal_ip: '10.0.11.100', external_ip: '192.168.1.100' }
-- { node: 'k8s-worker-2', internal_ip: '10.0.11.101', external_ip: '192.168.1.101'}
-- { node: 'k8s-worker-3', internal_ip: '10.0.11.102', external_ip: '192.168.1.102'}
+resource "azurerm_resource_group" "example" {
+  name     = "my-resources"
+  location = "West Europe"
+}
 
-## The IPs of the controllers
+module "vnet" {
+  source              = "Azure/vnet/azurerm"
+  resource_group_name = azurerm_resource_group.example.name
+  vnet_location       = "East US"
+  address_space       = ["10.0.0.0/16"]
+  subnet_prefixes     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  subnet_names        = ["subnet1", "subnet2", "subnet3"]
 
-Provide the IP addresses of the masters, ex:
-- { node: 'k8s-controller-1', internal_ip: '10.0.11.10', external_ip: '192.168.1.10' }
-- { node: 'k8s-controller-2', internal_ip: '10.0.11.20', external_ip: '192.168.1.20'}
-- { node: 'k8s-controller-3', internal_ip: '10.0.11.30', external_ip: '192.168.1.30'}
+  tags = {
+    environment = "dev"
+    costcenter  = "it"
+  }
+}
+```
 
-**N.B**: the IP addresses of the masters and workers have 2 parts: one **internal** accessible ONLY between nodes, the other **external**.
+## Example adding a network security rule for SSH
 
-## Cluster definition
+```hcl
+provider "azurerm" {
+  features {}
+}
 
-- **cluster_name**: the name of the kubernetes cluster. It defaults to "kubernetes".
-- **cluster_cidr**: the range of IP addresses handled by the cluster, ex: "10.0.11.0/24".
-- **pod_cidr**: the range of IP addresses assigned dynamically to pods, ex: "10.0.11.0/24".
+resource "azurerm_resource_group" "example" {
+  name     = "my-resources"
+  location = "West Europe"
+}
+
+module "vnet" {
+  source              = "Azure/vnet/azurerm"
+  resource_group_name = azurerm_resource_group.example.name
+  address_space       = ["10.0.0.0/16"]
+  subnet_prefixes     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  subnet_names        = ["subnet1", "subnet2", "subnet3"]
+
+  nsg_ids = {
+    subnet1 = azurerm_network_security_group.ssh.id
+    subnet2 = azurerm_network_security_group.ssh.id
+    subnet3 = azurerm_network_security_group.ssh.id
+  }
 
 
-# Dependencies
+  tags = {
+    environment = "dev"
+    costcenter  = "it"
+  }
+}
 
-N/A.
+resource "azurerm_network_security_group" "ssh" {
+  name                = "ssh"
+  resource_group_name = azurerm_resource_group.example.name
+  location            = azurerm_resource_group.example.location
+
+  security_rule {
+    name                       = "test123"
+    priority                   = 100
+    direction                  = "Inbound"
+    access                     = "Allow"
+    protocol                   = "Tcp"
+    source_port_range          = "*"
+    destination_port_range     = "22"
+    source_address_prefix      = "*"
+    destination_address_prefix = "*"
+  }
+
+}
+```
+
+## Example adding a route table
+
+```hcl
+provider "azurerm" {
+  features {}
+}
+
+resource "azurerm_resource_group" "example" {
+  name     = "my-resources"
+  location = "West Europe"
+}
+
+module "vnet" {
+  source              = "Azure/vnet/azurerm"
+  resource_group_name = azurerm_resource_group.example.name
+  address_space       = ["10.0.0.0/16"]
+  subnet_prefixes     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  subnet_names        = ["subnet1", "subnet2", "subnet3"]
+
+  route_tables_ids = {
+    subnet1 = azurerm_route_table.example.id
+    subnet2 = azurerm_route_table.example.id
+    subnet3 = azurerm_route_table.example.id
+  }
+
+
+  tags = {
+    environment = "dev"
+    costcenter  = "it"
+  }
+}
+
+resource "azurerm_route_table" "example" {
+  name                = "MyRouteTable"
+  resource_group_name = azurerm_resource_group.example.name
+  location            = azurerm_resource_group.example.location
+}
+
+resource "azurerm_route" "example" {
+  name                = "acceptanceTestRoute1"
+  resource_group_name = azurerm_resource_group.example.name
+  route_table_name    = azurerm_route_table.example.name
+  address_prefix      = "10.1.0.0/16"
+  next_hop_type       = "vnetlocal"
+}
+
+```
+
+## Example configuring private link endpoint network policy
+
+```hcl
+module "vnet" {
+  source              = "Azure/vnet/azurerm"
+  resource_group_name = azurerm_resource_group.example.name
+  address_space       = ["10.0.0.0/16"]
+  subnet_prefixes     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  subnet_names        = ["subnet1", "subnet2", "subnet3"]
+
+  subnet_service_endpoints = {
+    subnet2 = ["Microsoft.Storage", "Microsoft.Sql"],
+    subnet3 = ["Microsoft.AzureActiveDirectory"]
+  }
+
+  subnet_enforce_private_link_endpoint_network_policies = {
+    "subnet2" = true,
+    "subnet3" = true
+  }
+
+  tags = {
+    environment = "dev"
+    costcenter  = "it"
+  }
+
+  depends_on = [azurerm_resource_group.example]
+}
+```
+
+## Example configuring private link service network policy
+
+```hcl
+module "vnet" {
+  source              = "Azure/vnet/azurerm"
+  resource_group_name = azurerm_resource_group.example.name
+  address_space       = ["10.0.0.0/16"]
+  subnet_prefixes     = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
+  subnet_names        = ["subnet1", "subnet2", "subnet3"]
+
+  subnet_service_endpoints = {
+    subnet2 = ["Microsoft.Storage", "Microsoft.Sql"],
+    subnet3 = ["Microsoft.AzureActiveDirectory"]
+  }
+
+  subnet_enforce_private_link_service_network_policies = {
+    "subnet3" = true
+  }
+
+  tags = {
+    environment = "dev"
+    costcenter  = "it"
+  }
+
+  depends_on = [azurerm_resource_group.example]
+}
+```
+
+## Test
+
+### Configurations
+
+- [Configure Terraform for Azure](https://docs.microsoft.com/en-us/azure/virtual-machines/linux/terraform-install-configure)
+
+We provide 2 ways to build, run, and test the module on a local development machine.  [Native (Mac/Linux)](#native-maclinux) or [Docker](#docker).
+
+### Native (Mac/Linux)
+
+#### Prerequisites
+
+- [Ruby **(~> 2.3)**](https://www.ruby-lang.org/en/downloads/)
+- [Bundler **(~> 1.15)**](https://bundler.io/)
+- [Terraform **(~> 0.11.7)**](https://www.terraform.io/downloads.html)
+- [Golang **(~> 1.10.3)**](https://golang.org/dl/)
+
+#### Environment setup
+
+We provide simple script to quickly set up module development environment:
+
+```sh
+$ curl -sSL https://raw.githubusercontent.com/Azure/terramodtest/master/tool/env_setup.sh | sudo bash
+```
+
+#### Run test
+
+Then simply run it in local shell:
+
+```sh
+$ cd $GOPATH/src/{directory_name}/
+$ bundle install
+$ rake build
+$ rake full
+```
+
+### Docker
+
+We provide a Dockerfile to build a new image based `FROM` the `microsoft/terraform-test` Docker hub image which adds additional tools / packages specific for this module (see Custom Image section).  Alternatively use only the `microsoft/terraform-test` Docker hub image [by using these instructions](https://github.com/Azure/terraform-test).
+
+#### Prerequisites
+
+- [Docker](https://www.docker.com/community-edition#/download)
+
+#### Custom Image
+
+This builds the custom image:
+
+```sh
+$ docker build --build-arg BUILD_ARM_SUBSCRIPTION_ID=$ARM_SUBSCRIPTION_ID --build-arg BUILD_ARM_CLIENT_ID=$ARM_CLIENT_ID --build-arg BUILD_ARM_CLIENT_SECRET=$ARM_CLIENT_SECRET --build-arg BUILD_ARM_TENANT_ID=$ARM_TENANT_ID -t azure-vnet .
+```
+
+This runs the build and unit tests:
+
+```sh
+$ docker run --rm azure-vnet /bin/bash -c "bundle install && rake build"
+```
+
+This runs the end to end tests:
+
+```sh
+$ docker run --rm azure-vnet /bin/bash -c "bundle install && rake e2e"
+```
+
+This runs the full tests:
+
+```sh
+$ docker run --rm azure-vnet /bin/bash -c "bundle install && rake full"
+```
+
+## Authors
+
+Originally created by [Eugene Chuvyrov](http://github.com/echuvyrov)
 
 ## License
 
-GPLv3
+[MIT](LICENSE)
